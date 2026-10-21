@@ -1,0 +1,103 @@
+/*
+ * Seeed XIAO nRF52840
+ *
+ * AXA data line: a single-wire bus. D6 (TX, P1.11) and D5 (RX, P0.05) are tied
+ * together and the common line goes to the level shifter. TX is open drain,
+ * so the shifter's pull-ups hold the line high and either side can pull it
+ * low; a push-pull TX would fight the AXA's replies. RX hears our own
+ * transmissions too, the echo is skipped in axa.c.
+ * Factory reset: connect D1 (P0.03) to GND while resetting.
+ * Activity LED: the blue LED of the RGB LED (P0.06), see CONFIG_ESPAXA_ACTIVITY_LED.
+ */
+
+/ {
+	chosen {
+		ncs,zigbee-timer = &timer2;
+	};
+
+	zephyr,user {
+		reset-gpios = <&gpio0 3 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+	};
+
+	aliases {
+		axa-uart = &uart0;
+		activity-led = &led2;
+	};
+};
+
+&timer2 {
+	status = "okay";
+};
+
+&pinctrl {
+	uart0_axa_default: uart0_axa_default {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 1, 11)>;
+			/* Open drain: drive low, release for high */
+			nordic,drive-mode = <NRF_DRIVE_S0D1>;
+		};
+
+		group2 {
+			psels = <NRF_PSEL(UART_RX, 0, 5)>;
+			bias-pull-up;
+		};
+	};
+
+	uart0_axa_sleep: uart0_axa_sleep {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 1, 11)>,
+				<NRF_PSEL(UART_RX, 0, 5)>;
+			low-power-enable;
+		};
+	};
+};
+
+&uart0 {
+	current-speed = <19200>;
+	pinctrl-0 = <&uart0_axa_default>;
+	pinctrl-1 = <&uart0_axa_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/* The board's I2C bus uses D4/D5; D5 is the AXA RX now */
+&i2c1 {
+	status = "disabled";
+};
+
+/*
+ * Zigbee needs two partitions on top of settings storage. Take them from the
+ * end of the application area, the UF2 bootloader and SoftDevice areas stay.
+ *
+ * 0x00000 SoftDevice area   (156 kB, unused but kept for the UF2 bootloader)
+ * 0x27000 Application       (752 kB)
+ * 0xe3000 Storage           (8 kB)
+ * 0xe5000 ZBOSS NVRAM       (32 kB)
+ * 0xed000 ZBOSS product cfg (4 kB)
+ * 0xf4000 UF2 bootloader    (48 kB)
+ */
+/delete-node/ &code_partition;
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		code_partition: partition@27000 {
+			label = "Application";
+			reg = <0x00027000 0x000bc000>;
+		};
+
+		storage_partition: partition@e3000 {
+			label = "Storage";
+			reg = <0x000e3000 0x00002000>;
+		};
+
+		zboss_nvram: partition@e5000 {
+			label = "zboss-nvram";
+			reg = <0x000e5000 0x00008000>;
+		};
+
+		zboss_product_config: partition@ed000 {
+			label = "zboss-product-config";
+			reg = <0x000ed000 0x00001000>;
+		};
+	};
+};
