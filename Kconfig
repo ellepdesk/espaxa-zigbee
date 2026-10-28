@@ -39,6 +39,33 @@ config ESPAXA_ACTIVITY_LED
 	  Off in the battery build (overlay-battery.conf); there the pin
 	  stays unconfigured and the LED dark.
 
+config ESPAXA_BATTERY
+	bool "Report the battery level"
+	default y
+	depends on DT_HAS_VOLTAGE_DIVIDER_ENABLED
+	select SENSOR
+	help
+	  Measures the NiMH pack through the voltage divider on D0 (node
+	  vbatt in the board overlay) and reports BatteryVoltage and
+	  BatteryPercentageRemaining in a Power Configuration cluster. Without
+	  the divider fitted the reading is near 0 V and both are reported as
+	  unknown.
+
+config ESPAXA_BATTERY_INTERVAL_MS
+	int "Battery measurement interval"
+	depends on ESPAXA_BATTERY
+	range 60000 86400000
+	default 3600000
+	help
+	  The measurement waits until the AXA has been quiet for a minute,
+	  the pack sags while the motor runs.
+
+config ESPAXA_BATTERY_CELLS
+	int "NiMH cells in series"
+	depends on ESPAXA_BATTERY
+	range 1 8
+	default 4
+
 config ESPAXA_ZIGBEE_POLL_INTERVAL_MS
 	int "Zigbee parent poll interval"
 	range 250 7500

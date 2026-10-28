@@ -25,6 +25,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/pm/device.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 
 LOG_MODULE_REGISTER(axa, CONFIG_ESPAXA_LOG_LEVEL);
@@ -65,14 +66,20 @@ static struct motion motion;
 static bool in_transaction;
 
 /* ------------------------------------------------------------------------- */
-/* Activity LED                                                              */
+/* Activity                                                                  */
 /* ------------------------------------------------------------------------- */
+
+/*
+ * Read by other threads through axa_quiet_ms(). Not busy until axa_init()
+ * succeeds, so a missing AXA UART does not block the battery measurement.
+ */
+static atomic_t busy_flag;
+static atomic_t quiet_since_ms;
 
 #define ACTIVITY_LED_NODE DT_ALIAS(activity_led)
 
 #if defined(CONFIG_ESPAXA_ACTIVITY_LED) && DT_NODE_EXISTS(ACTIVITY_LED_NODE)
 static const struct gpio_dt_spec activity_led = GPIO_DT_SPEC_GET(ACTIVITY_LED_NODE, gpios);
-static bool led_blinking;
 
 static void led_toggle(struct k_timer *timer)
 {
@@ -82,7 +89,7 @@ static void led_toggle(struct k_timer *timer)
 
 static K_TIMER_DEFINE(led_timer, led_toggle, NULL);
 
-static void activity_init(void)
+static void led_init(void)
 {
 	if (!gpio_is_ready_dt(&activity_led) ||
 	    gpio_pin_configure_dt(&activity_led, GPIO_OUTPUT_INACTIVE) != 0) {
@@ -90,15 +97,9 @@ static void activity_init(void)
 	}
 }
 
-/* Blink while talking to the AXA or while it moves, off otherwise. */
-static void activity_update(void)
+/* Blink while busy, off otherwise */
+static void led_set(bool busy)
 {
-	bool busy = in_transaction || motion.phase != PHASE_IDLE;
-
-	if (busy == led_blinking) {
-		return;
-	}
-	led_blinking = busy;
 	if (busy) {
 		(void)gpio_pin_set_dt(&activity_led, 1);
 		k_timer_start(&led_timer, K_MSEC(LED_TOGGLE_MS), K_MSEC(LED_TOGGLE_MS));
@@ -108,14 +109,46 @@ static void activity_update(void)
 	}
 }
 #else
-static void activity_init(void)
+static void led_init(void)
 {
 }
 
-static void activity_update(void)
+static void led_set(bool busy)
 {
+	ARG_UNUSED(busy);
 }
 #endif
+
+/* Busy from the start of the boot exchange */
+static void activity_init(void)
+{
+	led_init();
+	atomic_set(&busy_flag, 1);
+	led_set(true);
+}
+
+/* Busy while talking to the AXA or while it moves. */
+static void activity_update(void)
+{
+	bool busy = in_transaction || motion.phase != PHASE_IDLE;
+
+	if (busy == (bool)atomic_get(&busy_flag)) {
+		return;
+	}
+	if (!busy) {
+		atomic_set(&quiet_since_ms, (atomic_val_t)k_uptime_get_32());
+	}
+	atomic_set(&busy_flag, busy);
+	led_set(busy);
+}
+
+uint32_t axa_quiet_ms(void)
+{
+	if (atomic_get(&busy_flag)) {
+		return 0;
+	}
+	return k_uptime_get_32() - (uint32_t)atomic_get(&quiet_since_ms);
+}
 
 /* ------------------------------------------------------------------------- */
 /* Serial                                                                    */

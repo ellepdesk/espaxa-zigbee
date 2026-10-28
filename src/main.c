@@ -12,6 +12,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <ram_pwrdn.h>
 
 /* Enables the HA Window Covering device declarations in ZBOSS */
@@ -24,10 +25,31 @@
 #include <zigbee/zigbee_error_handler.h>
 
 #include "axa.h"
+#include "battery.h"
+#include "battery_level.h"
 
 LOG_MODULE_REGISTER(app, CONFIG_ESPAXA_LOG_LEVEL);
 
 #define ESPAXA_ENDPOINT 1
+
+/*
+ * The HA Window Covering device (5 server clusters), plus Power Configuration
+ * for the battery. Plain numbers: ZBOSS pastes them into type names.
+ */
+#if defined(CONFIG_ESPAXA_BATTERY)
+#define ESPAXA_BATTERY_CLUSTERS 1
+#define ESPAXA_IN_CLUSTER_NUM 6
+#else
+#define ESPAXA_BATTERY_CLUSTERS 0
+#define ESPAXA_IN_CLUSTER_NUM 5
+#endif
+#define ESPAXA_OUT_CLUSTER_NUM 0
+/* Battery voltage and percentage remaining are reportable */
+#define ESPAXA_REPORT_ATTR_COUNT \
+	(ZB_HA_WINDOW_COVERING_REPORT_ATTR_COUNT + 2 * ESPAXA_BATTERY_CLUSTERS)
+
+/* ZCL: BatteryVoltage in 100 mV, 0xFF and BatteryPercentageRemaining 0xFF = unknown */
+#define BATTERY_UNKNOWN 0xFF
 
 #define ESPAXA_MANUF_NAME "espaxa"
 #define ESPAXA_MODEL_ID "AXA Remote 2.0"
@@ -57,6 +79,13 @@ struct espaxa_ctx {
 		zb_uint16_t closed_limit_tilt;
 		zb_uint8_t mode;
 	} wc;
+	struct {
+		zb_uint8_t voltage;
+		zb_uint8_t size;
+		zb_uint8_t quantity;
+		zb_uint8_t rated_voltage;
+		zb_uint8_t remaining;
+	} power;
 };
 
 static struct espaxa_ctx ctx;
@@ -103,18 +132,78 @@ ZB_ZCL_DECLARE_WINDOW_COVERING_CLUSTER_ATTRIB_LIST(
 	&ctx.wc.closed_limit_tilt,
 	&ctx.wc.mode);
 
-ZB_HA_DECLARE_WINDOW_COVERING_CLUSTER_LIST(
-	espaxa_clusters,
-	basic_attr_list,
-	identify_attr_list,
-	groups_attr_list,
-	scenes_attr_list,
-	window_covering_attr_list);
+#if defined(CONFIG_ESPAXA_BATTERY)
+/*
+ * Declared by hand: ZBOSS's battery list macros either lack the percentage or
+ * do not expand (ZB_ZCL_DECLARE_POWER_CONFIG_BATTERY_ATTRIB_LIST_EXT passes a
+ * literal "bat_num"). BatteryVoltage is made reportable here, ZBOSS's own
+ * descriptor for it is read-only without reporting.
+ */
+ZB_ZCL_START_DECLARE_ATTRIB_LIST_CLUSTER_REVISION(power_config_attr_list, ZB_ZCL_POWER_CONFIG)
+	{
+		ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
+		ZB_ZCL_ATTR_TYPE_U8,
+		ZB_ZCL_ATTR_ACCESS_READ_ONLY | ZB_ZCL_ATTR_ACCESS_REPORTING,
+		ZB_ZCL_NON_MANUFACTURER_SPECIFIC,
+		(void *)&ctx.power.voltage,
+	},
+	ZB_SET_ATTR_DESCR_WITH_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_SIZE_ID(&ctx.power.size, ),
+	ZB_SET_ATTR_DESCR_WITH_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_QUANTITY_ID(&ctx.power.quantity, ),
+	ZB_SET_ATTR_DESCR_WITH_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_RATED_VOLTAGE_ID(
+		&ctx.power.rated_voltage, ),
+	ZB_SET_ATTR_DESCR_WITH_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID(
+		&ctx.power.remaining, ),
+ZB_ZCL_FINISH_DECLARE_ATTRIB_LIST;
+#endif
 
-ZB_HA_DECLARE_WINDOW_COVERING_EP(
-	espaxa_ep,
+/* As ZB_HA_DECLARE_WINDOW_COVERING_CLUSTER_LIST, plus Power Configuration */
+static zb_zcl_cluster_desc_t espaxa_clusters[] = {
+	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_IDENTIFY, ZB_ZCL_ARRAY_SIZE(identify_attr_list, zb_zcl_attr_t),
+			    (identify_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
+	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_BASIC, ZB_ZCL_ARRAY_SIZE(basic_attr_list, zb_zcl_attr_t),
+			    (basic_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
+	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_WINDOW_COVERING, ZB_ZCL_ARRAY_SIZE(window_covering_attr_list, zb_zcl_attr_t),
+			    (window_covering_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
+	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_SCENES, ZB_ZCL_ARRAY_SIZE(scenes_attr_list, zb_zcl_attr_t),
+			    (scenes_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
+	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_GROUPS, ZB_ZCL_ARRAY_SIZE(groups_attr_list, zb_zcl_attr_t),
+			    (groups_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
+#if defined(CONFIG_ESPAXA_BATTERY)
+	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_POWER_CONFIG, ZB_ZCL_ARRAY_SIZE(power_config_attr_list, zb_zcl_attr_t),
+			    (power_config_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
+#endif
+};
+
+/* One level of indirection, so the counts expand before ZBOSS pastes them */
+#define DECLARE_SIMPLE_DESC(in_num, out_num) ZB_DECLARE_SIMPLE_DESC(in_num, out_num)
+DECLARE_SIMPLE_DESC(ESPAXA_IN_CLUSTER_NUM, ESPAXA_OUT_CLUSTER_NUM);
+
+static ZB_AF_SIMPLE_DESC_TYPE(ESPAXA_IN_CLUSTER_NUM, ESPAXA_OUT_CLUSTER_NUM) simple_desc_espaxa_ep = {
 	ESPAXA_ENDPOINT,
-	espaxa_clusters);
+	ZB_AF_HA_PROFILE_ID,
+	ZB_HA_WINDOW_COVERING_DEVICE_ID,
+	ZB_HA_DEVICE_VER_WINDOW_COVERING,
+	0,
+	ESPAXA_IN_CLUSTER_NUM,
+	ESPAXA_OUT_CLUSTER_NUM,
+	{
+		ZB_ZCL_CLUSTER_ID_BASIC,
+		ZB_ZCL_CLUSTER_ID_IDENTIFY,
+		ZB_ZCL_CLUSTER_ID_WINDOW_COVERING,
+		ZB_ZCL_CLUSTER_ID_SCENES,
+		ZB_ZCL_CLUSTER_ID_GROUPS,
+#if defined(CONFIG_ESPAXA_BATTERY)
+		ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+#endif
+	},
+};
+
+ZBOSS_DEVICE_DECLARE_REPORTING_CTX(reporting_info_espaxa_ep, ESPAXA_REPORT_ATTR_COUNT);
+
+ZB_AF_DECLARE_ENDPOINT_DESC(espaxa_ep, ESPAXA_ENDPOINT, ZB_AF_HA_PROFILE_ID, 0, NULL,
+			    ZB_ZCL_ARRAY_SIZE(espaxa_clusters, zb_zcl_cluster_desc_t),
+			    espaxa_clusters, (zb_af_simple_desc_1_1_t *)&simple_desc_espaxa_ep,
+			    ESPAXA_REPORT_ATTR_COUNT, reporting_info_espaxa_ep, 0, NULL);
 
 ZBOSS_DECLARE_DEVICE_CTX_1_EP(
 	espaxa_device_ctx,
@@ -142,6 +231,15 @@ static void clusters_attr_init(void)
 	ctx.wc.open_limit_tilt = ZB_ZCL_WINDOW_COVERING_INSTALLED_OPEN_LIMIT_TILT_DEFAULT_VALUE;
 	ctx.wc.closed_limit_tilt = ZB_ZCL_WINDOW_COVERING_INSTALLED_CLOSED_LIMIT_TILT_DEFAULT_VALUE;
 	ctx.wc.mode = 0;
+
+#if defined(CONFIG_ESPAXA_BATTERY)
+	ctx.power.voltage = BATTERY_UNKNOWN;
+	ctx.power.size = ZB_ZCL_POWER_CONFIG_BATTERY_SIZE_AA;
+	ctx.power.quantity = CONFIG_ESPAXA_BATTERY_CELLS;
+	/* Per cell, in 100 mV: NiMH 1.2 V */
+	ctx.power.rated_voltage = 12;
+	ctx.power.remaining = BATTERY_UNKNOWN;
+#endif
 }
 
 /* Runs in the Zigbee thread, scheduled from the AXA thread. */
@@ -165,6 +263,58 @@ static int on_axa_position(uint8_t open_percent)
 	}
 	return 0;
 }
+
+#if defined(CONFIG_ESPAXA_BATTERY)
+/* Latest pack voltage, handed from the system work queue to the ZBOSS thread */
+static atomic_t battery_mv;
+
+static void set_attr_u8(zb_uint16_t cluster, zb_uint16_t attr, zb_uint8_t value)
+{
+	zb_zcl_status_t status = zb_zcl_set_attr_val(ESPAXA_ENDPOINT, cluster,
+						     ZB_ZCL_CLUSTER_SERVER_ROLE, attr, &value,
+						     ZB_FALSE);
+
+	if (status != ZB_ZCL_STATUS_SUCCESS) {
+		LOG_WRN("Cannot set attribute 0x%04x/0x%04x (status %d)", cluster, attr, status);
+	}
+}
+
+/* Runs in the Zigbee thread, scheduled from on_battery(). */
+static void set_battery_attrs(zb_uint8_t unused)
+{
+	int pack_mv = (int)atomic_get(&battery_mv);
+	int cell_mv = pack_mv / CONFIG_ESPAXA_BATTERY_CELLS;
+	zb_uint8_t voltage = BATTERY_UNKNOWN;
+	zb_uint8_t remaining = BATTERY_UNKNOWN;
+
+	ARG_UNUSED(unused);
+
+	if (cell_mv >= BATTERY_LEVEL_MIN_VALID_CELL_MV) {
+		voltage = (zb_uint8_t)MIN((pack_mv + 50) / 100, 0xFE);
+		/* In half percent */
+		remaining = 2 * battery_level_percent(cell_mv);
+	}
+	set_attr_u8(ZB_ZCL_CLUSTER_ID_POWER_CONFIG, ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
+		    voltage);
+	set_attr_u8(ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+		    ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID, remaining);
+}
+
+static void on_battery(int pack_mv)
+{
+	int cell_mv = pack_mv / CONFIG_ESPAXA_BATTERY_CELLS;
+
+	if (cell_mv < BATTERY_LEVEL_MIN_VALID_CELL_MV) {
+		LOG_WRN("Battery %d mV, no divider on D0? Reporting unknown", pack_mv);
+	} else {
+		LOG_INF("Battery %d mV, %u%%", pack_mv, battery_level_percent(cell_mv));
+	}
+	atomic_set(&battery_mv, pack_mv);
+	if (zigbee_schedule_callback(set_battery_attrs, 0) != RET_OK) {
+		LOG_WRN("Cannot schedule battery report");
+	}
+}
+#endif
 
 static void zcl_device_cb(zb_bufid_t bufid)
 {
@@ -348,6 +498,12 @@ int main(void)
 	if (axa_init(on_axa_position) != 0) {
 		LOG_ERR("AXA init failed");
 	}
+
+#if defined(CONFIG_ESPAXA_BATTERY)
+	if (battery_init(on_battery) != 0) {
+		LOG_ERR("Battery measurement init failed");
+	}
+#endif
 
 	return 0;
 }

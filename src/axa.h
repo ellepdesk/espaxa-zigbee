@@ -24,4 +24,10 @@ int axa_init(axa_position_cb_t position_cb);
 void axa_move_to(uint8_t open_percent);
 void axa_stop(void);
 
+/*
+ * Time since the AXA was last busy (a serial exchange or a move), 0 while it
+ * is busy and until the boot exchange is over. Safe from any thread.
+ */
+uint32_t axa_quiet_ms(void);
+
 #endif /* AXA_H_ */

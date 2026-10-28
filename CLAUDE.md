@@ -39,7 +39,10 @@ west build -b xiao_ble --sysbuild -d ~/git/espaxa-zigbee/build-battery ~/git/esp
 | `src/main.c` | Zigbee glue: clusters, ZCL command callback, signal handler, factory reset pin |
 | `src/axa.c`, `src/axa.h` | AXA serial protocol, request queue and the AXA thread |
 | `src/motion.c`, `src/motion.h` | Motion state machine: phases, lock state, position estimate, what to send when. Pure C, no Zephyr |
-| `tests/test_motion.c`, `tests/run.sh` | Host tests for the state machine against a fake AXA and clock |
+| `src/battery.c`, `src/battery.h` | Battery voltage through the divider on D0, every hour once the AXA has been quiet for a minute |
+| `src/battery_level.c`, `src/battery_level.h` | NiMH voltage to percentage curve. Pure C, no Zephyr |
+| `tests/` | Host tests from Python: `Makefile` builds `motion.c`, `battery_level.c` and `shim.c` (fake AXA and clock) into a shared library, `harness.py` wraps it with ctypes, `test_*.py` are pytest |
+| `HARDWARE.md` | Wiring diagram, AXA connector pinout, XIAO pins, level shifter, battery divider |
 | `TESTING.md` | Hardware test plan for when the AXA is connected |
 | `boards/xiao_ble.overlay` | AXA UART on `uart0`: D6 TX P1.11 (open drain) and D5 RX P0.05 tied into one bus line, 19200; I2C on D4/D5 disabled, Zigbee timer, flash partitions, reset pin |
 | `Kconfig` | `CONFIG_ESPAXA_*` timing options and the log module |
@@ -103,8 +106,10 @@ Window Covering mapping:
   not fully locked", 260/261 device/firmware info, 502 error.
 ### Motion state machine (in `motion.c`)
 
-Run the host tests after any change: `tests/run.sh` (needs only a C compiler;
-`MOTION_LOG=1 tests/run.sh` prints the state machine's log).
+Run the host tests after any change: `cd tests && pytest` (needs a C
+compiler, `make` and pytest; `MOTION_LOG=1 pytest -s` prints the state
+machine's log). A new field or function the tests need goes through
+`tests/shim.c` and the `signatures` dict in `tests/harness.py`.
 
 - **Phases:** idle, unlocking (OPEN accepted while locked, chain starts after
   `UNLOCK_DURATION`), opening, closing, locking (estimate at 0, the AXA locks
@@ -157,9 +162,9 @@ Run the host tests after any change: `tests/run.sh` (needs only a C compiler;
 - **STATUS poll every 10 min while idle.** It only exists to detect button use
   on the AXA, and every poll wakes the AXA. While moving it runs every 2 s, to
   catch locking.
-- **Closing sends OPEN before CLOSE.** Carried over from the original
-  implementation, which found it necessary. The reason is unknown; don't remove
-  it without testing.
+- **Closing sends OPEN before CLOSE.** From galagaking/espaxa: the AXA
+  blocks at its end position, and a short OPEN releases it. Don't remove it
+  without testing.
 - **Flash layout.** The XIAO's UF2 bootloader needs the application at 0x27000.
   Zigbee needs `zboss_nvram` (32 kB) and `zboss_product_config` (4 kB) as fixed
   partitions, so the application partition shrinks to 752 kB:
@@ -185,6 +190,14 @@ Run the host tests after any change: `tests/run.sh` (needs only a C compiler;
 - **All channels.** `CONFIG_ZIGBEE_CHANNEL_SELECTION_MODE_MULTI=y` with the
   default all-channel mask. Nordic defaults to channel 16 only, which never
   finds a ZHA network on another channel.
+- **Power Configuration declared by hand.** The Window Covering device macros
+  hard-code 5 clusters, so `main.c` declares the cluster list, simple
+  descriptor and endpoint itself, with Power Configuration as the 6th.
+  ZBOSS pastes the cluster counts and IDs into names: they must be plain
+  numbers and names, and `ZB_DECLARE_SIMPLE_DESC` needs a wrapper macro to
+  expand them. `ZB_ZCL_DECLARE_POWER_CONFIG_BATTERY_ATTRIB_LIST_EXT` does not
+  expand at all; BatteryVoltage gets its own descriptor with reporting.
+  Adding the cluster to a paired device needs "Reconfigure" in ZHA.
 - **Factory reset pin.** Read once at boot, then set to `GPIO_DISCONNECTED`, so
   a jumper left in place doesn't draw current through the pull-up.
 - **Activity LED, debug build only.** The blue LED (alias `activity-led`,
@@ -194,21 +207,38 @@ Run the host tests after any change: `tests/run.sh` (needs only a C compiler;
 
 ## Hardware
 
-- **Board:** Seeed XIAO nRF52840.
-- **Power:** a 4× NiMH AA pack (4.0–5.8 V) on the 5V pin, shared with the AXA,
-  which runs on its own 4 AA cells.
+`HARDWARE.md` has the wiring diagram, the AXA RJ12 pinout and all pins. The
+points that matter for the firmware:
+
+- **Board:** Seeed XIAO nRF52840. The bootloader reports a Sense, which the
+  plain `xiao_ble` target covers.
+- **Power:** the AXA's 4× AA pack (4.0–6.6 V, NiMH or alkaline), tapped at
+  the battery bay's + terminal, through an external low-quiescent 3.3 V LDO
+  into the 3V3 pin. Not the 5V pin: the XIAO's own regulator (SGM2040, 6 V
+  absolute maximum) cannot take fresh alkaline cells. The RJ12 carries only
+  DATA and GND; its Vcc pins are not connected.
+- **LDO, not a buck converter** (decided 2026-10-21): an estimated 5 to 10%
+  standby gain does not justify an inductor and the few parts that take
+  6.6 V. Revisit only if the measured sleep current is well above the budget.
+  The LDO's own quiescent current matters as much: keep it under 5 µA.
+- **Worst-case design:** it has to work on both known AXA board versions
+  (bus pull-up 3.9 kΩ or 33 kΩ) without measuring, so the repo can be shared.
+  `HARDWARE.md` has the numbers; they are why TX uses high drive
+  (`NRF_DRIVE_H0D1`) and why the series resistor is 33 Ω.
 - **Data line:** a single-wire bus. TX (D6) and RX (D5) are tied together, and
   that line goes through a single-FET bidirectional level shifter to the AXA
-  data line. TX is open drain, so the shifter's pull-ups hold the line high
-  and either side can pull it low. RX hears every byte the XIAO sends; the
+  data line through 33 Ω. The AXA has its own pull-up on the bus; on the
+  3.3 V side the internal pull-up of RX is the only one. TX is open drain
+  with high drive, so the pull-ups hold the line high and either side can
+  pull it low. RX hears every byte the XIAO sends; the
   echoed command line is skipped in `transact()`, and a timeout without any
-  echo logs a wiring warning. There is no MCP2003A LIN transceiver and
+  echo logs a wiring warning. There is no MCP2003A transceiver and
   no boost converter.
-- **Open question:** the maximum input voltage of the XIAO's 5V-pin regulator
-  is unverified against freshly charged NiMH cells (about 5.8 V). A series
-  diode is the fallback.
-- **Unknown AXA figures:** standby current and the charge used per open/close
-  cycle. Both need measuring.
+- **Battery sense:** 4.7 MΩ / 2.2 MΩ divider with 100 nF from battery + to
+  D0 (AIN0). The XIAO's own battery sense (P0.31) measures the LiPo pads and
+  cannot see the AXA's pack. Below 0.5 V per cell the firmware assumes no
+  divider is fitted and reports the battery as unknown.
+- **Open questions:** listed at the end of `HARDWARE.md`.
 
 ## Reference
 
@@ -227,4 +257,6 @@ Run the host tests after any change: `tests/run.sh` (needs only a C compiler;
 - Bring-up on hardware: AXA serial exchange, joining ZHA, and the direction of
   the cover in HA.
 - Measure the sleep current of the battery build.
-- Add a battery level report (Power Configuration cluster).
+- Calibrate the battery curve in `battery_level.c` against the real pack.
+- Rejoin by itself after more than 200 s without a network (see `TESTING.md`
+  8.4).

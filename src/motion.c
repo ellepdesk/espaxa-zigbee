@@ -282,7 +282,7 @@ static void start_open(struct motion *m)
 
 static void start_close(struct motion *m)
 {
-	/* CLOSE is preceded by OPEN, as in the original implementation */
+	/* The AXA blocks at its end position, a short OPEN releases it (galagaking/espaxa) */
 	int code = send(m, CMD_OPEN);
 
 	if (code != CODE_OK) {

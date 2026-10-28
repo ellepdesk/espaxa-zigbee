@@ -8,4 +8,7 @@ target_sources(app PRIVATE
 	src/main.c
 	src/axa.c
 	src/motion.c
+	src/battery_level.c
 )
+
+target_sources_ifdef(CONFIG_ESPAXA_BATTERY app PRIVATE src/battery.c)

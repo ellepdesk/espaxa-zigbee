@@ -4,7 +4,7 @@ Bring-up and acceptance tests for the first time the XIAO is wired to a real
 AXA Remote 2.0. Work through the sections in order: each one depends on the
 previous one passing.
 
-The state machine logic is covered by the host tests (`tests/run.sh`). This
+The state machine logic is covered by the host tests (`cd tests && pytest`). This
 plan covers what the host tests cannot: the AXA's real replies and timings,
 the wiring, Home Assistant, and a few AXA behaviours the firmware currently
 *assumes*. Those are marked **Unverified** and are the most important results
@@ -43,6 +43,8 @@ Record for each test: pass or fail, and the relevant console lines.
 | 1.1 | Reset the XIAO with the AXA connected | `Device: ...` and `Firmware: ...` lines, no "No response" retries. The echo of each command on the shared bus is skipped silently |
 | 1.2 | Watch the first STATUS | `STATUS -> 211 '211 ...'` with the window locked |
 | 1.3 | Note the exact reply text of DEVICE, FIRMWARE and STATUS | Copy them into this file, they document the protocol |
+| 1.4 | Note which bus pull-up the AXA has: the resistor marked 392 or 333, see `HARDWARE.md` | Recorded in the results table, so both board versions get tested over time |
+| 1.5 | Scope DATA at the RJ12 during a STATUS exchange | Idles at the battery voltage. Low under 0.25 V while the XIAO sends, under 0.3 V while the AXA answers. Rising edges reach the high level within 15 µs |
 
 If every command times out:
 
@@ -52,7 +54,9 @@ If every command times out:
   the bus line is broken, shorted to ground, or D5 and D6 are not tied.
 - Timeouts without that warning mean the bus works but the AXA does not
   answer. Check the AXA side of the shifter.
-- Check the level shifter's supply on both sides.
+- Check that the level shifter's gate is on 3V3. Its 3.3 V side relies on
+  the internal pull-up of RX, its high side on the AXA's own pull-up: the bus
+  should idle high with the XIAO disconnected.
 - Lines that show up as `Skipping '...'` mean the link works but the replies
   look different from what the firmware expects. Capture them.
 
@@ -146,16 +150,35 @@ With `overlay-test.conf`, idle STATUS polls come every 30 s.
 
 ## 9. Battery build
 
-Run this only after sections 1 to 8 pass.
+Run this only after sections 1 to 8 pass. Section 10 can run before or after
+it.
 
 1. Build without the overlay and with `overlay-battery.conf`, as in the README.
-2. Flash it and power the board from the NiMH pack through a current meter.
+2. Flash it and power the board from the battery pack through a current
+   meter in front of the LDO, with USB disconnected.
 3. Measure the idle current over at least 10 minutes, so it includes a STATUS
    poll. The target is the budget in `CLAUDE.md`, about 1.2 to 1.7 mAh/day.
 4. Repeat 3.1 and 3.2 to confirm commands still work without the console.
 
+## 10. Battery level
+
+Needs the divider on D0 from `HARDWARE.md`. The first measurement comes 20 s
+after boot at the earliest, then every hour. Each one waits until the AXA has
+been quiet for a minute.
+
+| # | Step | Expected |
+|---|---|---|
+| 10.1 | After pairing, or after "Reconfigure" in ZHA for an already paired device | A battery sensor appears on the device in HA |
+| 10.2 | Boot with the console open and wait about 90 s | `Battery ... mV, ...%`. Compare the mV with a meter on the battery bay's + terminal: within 2% |
+| 10.3 | Boot without the divider fitted | `no divider on D0?` warning, HA shows the battery as unknown |
+| 10.4 | Open and close the window, then watch the next measurement | It waits until 60 s after the AXA went quiet |
+| 10.5 | Over the life of a set of cells, note the reported percentage and the meter voltage every week | Data to calibrate the curve in `src/battery_level.c` |
+
+For quicker checks, build with `CONFIG_ESPAXA_BATTERY_INTERVAL_MS=60000` in
+`overlay-test.conf`.
+
 ## Results
 
-| Date | Firmware build time | Sections run | Notes |
-|---|---|---|---|
-| | | | |
+| Date | Firmware build time | AXA pull-up (392 or 333) | Cells | Sections run | Notes |
+|---|---|---|---|---|---|
+| | | | | | |

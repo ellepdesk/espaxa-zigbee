@@ -10,16 +10,24 @@ for Home Assistant ZHA. Successor of [espaxa](https://github.com/ellepdesk/espax
   router buffers them while the device sleeps
 - Position estimated from travel time, locking confirmed by the AXA
 - Detects use of the buttons on the AXA itself
+- Reports the battery voltage and level of the AXA's battery pack
 
 ## Hardware
 
+See [HARDWARE.md](HARDWARE.md) for the wiring diagram and the details.
+
 | XIAO | Connects to |
 |---|---|
-| D6 (P1.11, TX) | Tied to D5, the common line goes through the level shifter to AXA data |
+| 3V3 | 3.3 V LDO (input rated 7 V or more) from the + terminal of the AXA's battery bay |
+| 5V | Not connected, USB only. RJ12 pins 1 and 6 are not used either |
+| GND | AXA GND (RJ12 pins 2 and 5) |
 | D5 (P0.05, RX) | Tied to D6 |
-| 5V | 4x NiMH pack (shared with the AXA) |
-| GND | AXA GND |
+| D6 (P1.11, TX) | Tied to D5. The common line goes through a BSS138 (gate on 3V3) and 33 Ω to AXA DATA (RJ12 pins 3 and 4) |
+| D0 (P0.02) | Battery sense: 4.7 MΩ to battery +, 2.2 MΩ and 100 nF to GND |
 | D1 (P0.03) | Factory reset: connect to GND while resetting |
+
+The design works on both known AXA board versions and with any 4 AA cells,
+NiMH or alkaline.
 
 ## Setup
 
@@ -52,13 +60,17 @@ west build -b xiao_ble --sysbuild -d ~/git/espaxa-zigbee/build-battery ~/git/esp
 
 ## Tests
 
-The motion state machine has host tests that need only a C compiler:
+The motion state machine and the battery level curve are plain C, and are
+unit tested on the host from Python: no board, no flashing. Needs a C
+compiler, `make` and pytest.
 
 ```sh
-tests/run.sh
+cd tests
+pytest
 ```
 
-`TESTING.md` is the test plan for the hardware with the AXA connected.
+See [tests/README.md](tests/README.md). `TESTING.md` is the test plan for the
+hardware with the AXA connected.
 
 ## Flash
 
@@ -85,3 +97,26 @@ Timings are Kconfig options, set them in `prj.conf`:
 | `CONFIG_ESPAXA_STATUS_INTERVAL_MS` | 600000 | AXA STATUS poll while idle |
 | `CONFIG_ESPAXA_MOVING_STATUS_INTERVAL_MS` | 2000 | AXA STATUS poll while moving |
 | `CONFIG_ESPAXA_ZIGBEE_POLL_INTERVAL_MS` | 5000 | command delay, keep below 7.7 s |
+| `CONFIG_ESPAXA_BATTERY` | y | battery voltage and level in a Power Configuration cluster |
+| `CONFIG_ESPAXA_BATTERY_INTERVAL_MS` | 3600000 | battery measurement interval |
+| `CONFIG_ESPAXA_BATTERY_CELLS` | 4 | NiMH cells in series |
+| `CONFIG_ESPAXA_ACTIVITY_LED` | y | blue LED blinks while the AXA is busy, off in the battery build |
+
+## Credits
+
+- [galagaking/espaxa](https://github.com/galagaking/espaxa) by galagaking: the
+  original ESPHome module for the AXA Remote 2.0. It worked out the serial
+  protocol and the wiring, and found that closing needs a short OPEN first to
+  release the AXA from its end position.
+- [ellepdesk/espaxa](https://github.com/ellepdesk/espaxa), a fork of the above:
+  a rewrite with positions estimated from travel time and the window as a
+  cover. This firmware ports its logic to Zigbee.
+
+## License
+
+[CC0 1.0](LICENSE), the same as both projects above.
+
+This repository contains only original code. The firmware is built with the
+nRF Connect SDK, Zephyr (Apache-2.0) and the ZBOSS Zigbee stack (Nordic
+5-Clause license). Those are not part of this repository, but anyone
+distributing built binaries has to follow their licenses.

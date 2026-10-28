@@ -3,16 +3,35 @@
  *
  * AXA data line: a single-wire bus. D6 (TX, P1.11) and D5 (RX, P0.05) are tied
  * together and the common line goes to the level shifter. TX is open drain,
- * so the shifter's pull-ups hold the line high and either side can pull it
- * low; a push-pull TX would fight the AXA's replies. RX hears our own
+ * so the pull-ups (the AXA's own, the shifter's on the 3.3 V side) hold the
+ * line high and either side can pull it low; a push-pull TX would fight the
+ * AXA's replies. RX hears our own
  * transmissions too, the echo is skipped in axa.c.
  * Factory reset: connect D1 (P0.03) to GND while resetting.
  * Activity LED: the blue LED of the RGB LED (P0.06), see CONFIG_ESPAXA_ACTIVITY_LED.
+ * Battery: battery bay + -- 4.7M -- D0 (P0.02, AIN0) -- 2.2M -- GND, with 100 nF
+ * from D0 to GND. The XIAO's own battery sense (P0.31) measures the LiPo pad,
+ * so it cannot see the AXA's battery pack.
  */
+
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-saadc.h>
 
 / {
 	chosen {
 		ncs,zigbee-timer = &timer2;
+	};
+
+	/*
+	 * Divider ratio 2.2 / 6.9: 6.6 V (4 fresh alkaline cells) -> 2.1 V at D0,
+	 * inside the 3.6 V range. It draws under 1 uA. The capacitor supplies the ADC's
+	 * sampling charge, the divider alone is too high-impedance for it.
+	 */
+	vbatt: vbatt {
+		compatible = "voltage-divider";
+		io-channels = <&adc 0>;
+		output-ohms = <2200000>;
+		full-ohms = <(4700000 + 2200000)>;
 	};
 
 	zephyr,user {
@@ -25,6 +44,21 @@
 	};
 };
 
+&adc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_AIN0>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <4>;
+	};
+};
+
 &timer2 {
 	status = "okay";
 };
@@ -33,8 +67,13 @@
 	uart0_axa_default: uart0_axa_default {
 		group1 {
 			psels = <NRF_PSEL(UART_TX, 1, 11)>;
-			/* Open drain: drive low, release for high */
-			nordic,drive-mode = <NRF_DRIVE_S0D1>;
+			/*
+			 * Open drain with high drive low: release for high, pull low
+			 * with at least 6 mA at 0.4 V. Worst case the pin sinks about
+			 * 2.1 mA (3.9 kOhm AXA pull-up at 6.6 V, plus the RX pull-up),
+			 * more than standard drive guarantees (1 mA). See HARDWARE.md.
+			 */
+			nordic,drive-mode = <NRF_DRIVE_H0D1>;
 		};
 
 		group2 {
