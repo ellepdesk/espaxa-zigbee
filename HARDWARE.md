@@ -3,8 +3,9 @@
 A Seeed XIAO nRF52840 talks to the AXA Remote 2.0 over its single-wire data
 line, through a one-FET level shifter. It is powered from the AXA's own
 battery pack through a small external 3.3 V regulator, and measures the pack
-voltage through a high-impedance divider. The RJ12 carries only data and
-ground.
+voltage through a high-impedance divider. The RJ12 carries data and ground,
+and pin 1 gets the battery voltage during each exchange to power the AXA's
+bus pull-up, see [Bus pull-up power](#bus-pull-up-power).
 
 The design is meant to work on every AXA board version and with any 4 AA
 cells, without measuring anything first. The worst-case figures are in
@@ -22,10 +23,11 @@ cells, without measuring anything first. The worst-case figures are in
 
                                          gate ── 3V3
  AXA RJ12 6P6C               ┌──────────┴──┐
- DATA (3, 4) ──── 33 Ω ──────┤ D   BSS138 S├──┬── D5  (RX, internal pull-up)
- (pulled up in the AXA)      └─────────────┘  └── D6  (TX, open drain)
+ DATA (3, 4) ──── 33 Ω ──────┤ D   BSS138 S├──┬── D9  (RX, internal pull-up)
+ (pulled up in the AXA)      └─────────────┘  └── D10 (TX, open drain)
  GND  (2, 5) ────────────────────────────────── GND
- Vcc  (1, 6)   not connected                    5V  not connected
+ Vcc  (1)     ── 1 kΩ ── bus power switch ───── D8  (see below)
+ Vcc  (6)     not connected                     5V  not connected
 ```
 
 ## Parts
@@ -39,9 +41,12 @@ cells, without measuring anything first. The worst-case figures are in
 | Divider, top | 4.7 MΩ | Battery + to D0 |
 | Divider, bottom | 2.2 MΩ | D0 to GND |
 | Capacitor | 100 nF | D0 to GND |
+| PNP transistor | BC557, 2N3906 or similar | Bus power switch |
+| NPN transistor | BC547, 2N3904 or similar | Drives the PNP from D8 |
+| Resistors | 100 kΩ (2), 47 kΩ, 22 kΩ, 1 kΩ | Bus power switch |
 
-No pull-up resistors are needed: the AXA pulls DATA up, and the internal
-pull-up of RX does the low-voltage side.
+No pull-up resistors are needed: the AXA pulls DATA up once pin 1 is
+powered, and the internal pull-up of RX does the low-voltage side.
 
 ## AXA connector
 
@@ -50,7 +55,7 @@ ESPHome version (`~/git/espaxa/docs/`):
 
 | RJ12 pin | Signal |
 |---|---|
-| 1, 6 | Vcc. Not connected here; the ESPHome version fed its 8 V supply in on these |
+| 1, 6 | Vcc. The ESPHome version fed its 8 V supply in on these. Here pin 1 gets the battery voltage through the bus power switch, only during an exchange |
 | 2, 5 | GND |
 | 3, 4 | DATA |
 
@@ -69,8 +74,9 @@ From opening several units, described in the
 [Tweakers thread](https://gathering.tweakers.net/forum/list_messages/1991748)
 (posts by elleP and Stainless Steel, November and December 2022):
 
-- **Bus pull-up:** a resistor from the AXA's supply to DATA. The bus therefore
-  idles at the battery voltage.
+- **Bus pull-up:** a resistor from RJ12 pin 1 (Vcc) to DATA, not from the
+  batteries. Measured on a battery-powered unit (2026-10-30): with pin 1
+  unconnected, DATA idles at about 1.4 V and the AXA does not answer.
 - **Bus driver:** the AXA's microcontroller runs at 3.3 V and pulls DATA low
   through a transistor and a small series resistor.
 - **Board versions:** the resistor values differ between PCB versions. The
@@ -100,12 +106,14 @@ From opening several units, described in the
 | GND | — | AXA GND, RJ12 pins 2 and 5 |
 | D0 | P0.02, AIN0 | Battery voltage, middle of the divider |
 | D1 | P0.03 | Factory reset: connect to GND while resetting |
-| D5 | P0.05 | AXA bus RX, tied to D6 |
-| D6 | P1.11 | AXA bus TX, open drain with high drive, tied to D5 |
+| D8 | P1.13 | Bus power switch, high during an exchange |
+| D9 | P1.14 | AXA bus RX, tied to D10 |
+| D10 | P1.15 | AXA bus TX, open drain with high drive, tied to D9 |
 | Blue LED | P0.06 | Activity LED, debug build only |
 
-Free pins: D2, D3, D4, D7, D8, D9 and D10. D2, D3 and D4 can also be analog
-inputs. The board's I2C bus on D4 and D5 is disabled, because D5 is the bus RX.
+Free pins: D2 to D7. D2 to D5 can also be analog inputs. The board's SPI bus
+on D8, D9 and D10 is disabled, because D9 and D10 are the AXA bus and D8 is
+the bus power switch. D8 to D10 sit next to 3V3 on the header.
 
 The bootloader may identify the board as a XIAO nRF52840 Sense. The firmware
 uses the plain `xiao_ble` target, which covers both; the Sense's IMU and
@@ -113,7 +121,7 @@ microphone are not used.
 
 ## Data line
 
-- **D5 and D6 tied together:** the UART's RX and TX share the single bus line,
+- **D9 and D10 tied together:** the UART's RX and TX share the single bus line,
   which goes to the source of the FET.
 - **TX is open drain with high drive:** it only pulls low, with at least 6 mA
   at 0.4 V. The pull-ups hold the line high, so the AXA can pull it low while
@@ -121,7 +129,7 @@ microphone are not used.
 - **RX hears our own transmissions:** the firmware skips the echo of each
   command. A timeout without an echo logs a wiring warning, see `TESTING.md`.
 - **Level shifter:** a single N-channel MOSFET with its gate on 3V3. The AXA's
-  own pull-up holds the drain side high. The internal pull-up of RX on D5,
+  own pull-up holds the drain side high. The internal pull-up of RX on D9,
   11 to 16 kΩ, holds the source side high; an external one is not needed.
 - **Series resistor:** 33 Ω between the drain and DATA, as the AXA's own
   driver has. It keeps the low level within margin, see below, and limits the
@@ -134,6 +142,45 @@ microphone are not used.
   their low-power state. The source side then floats to about 3.3 V minus the
   FET's threshold, where the FET stops conducting, and the AXA's pull-up keeps
   the bus idle.
+
+## Bus pull-up power
+
+The AXA's bus pull-up runs off RJ12 pin 1, which only an adapter (or the
+ESPHome version's 8 V supply) powers. On batteries pin 1 is dead, DATA floats
+at about 1.4 V and the AXA neither hears nor answers. So the XIAO puts the
+battery voltage on pin 1, but only during an exchange:
+
+```
+ battery + ──┬──────────────── E
+             │              PNP (BC557 / 2N3906)
+           100 kΩ ─── B ────┤
+             │        │     C ── 1 kΩ ── RJ12 pin 1
+             │       22 kΩ
+             │        │
+             │        C
+             │      NPN (BC547 / 2N3904)
+             │        E ── GND
+             │        B ──┬── 47 kΩ ── D8
+             │            └── 100 kΩ ── GND
+```
+
+- **Why switched:** pin 1 draws 25 to 50 µA when powered (measured
+  2026-10-30), 0.6 to 1.2 mAh/day if left on. That would about double the
+  drain of the electronics.
+- **Why battery voltage, not 3.3 V:** a 3.3 V bus only worked with the
+  3.9 kΩ pull-up of version A, not with version B.
+- **D8 low:** the NPN is off, the 100 kΩ from base to emitter holds the PNP
+  off. The 100 kΩ from the NPN's base to GND keeps it off while D8 is not
+  driven, at boot.
+- **D8 high:** about 55 µA of base current saturates the NPN, which pulls
+  about 0.18 mA from the PNP's base; the PNP saturates and pin 1 sits about
+  0.1 V below the battery. Pin 1 needs at most about 1.4 mA: its own 50 µA
+  plus the version A pull-up while DATA is low.
+- **1 kΩ in series:** limits the current if pin 1 also feeds the AXA's power
+  rail inside.
+- **Firmware:** `axa.c` switches D8 on, waits
+  `CONFIG_ESPAXA_BUS_POWER_SETTLE_MS` (50 ms) for pin 1 and DATA to rise,
+  then sends the wake-up CR. D8 goes low again after the exchange.
 
 ## Battery voltage
 

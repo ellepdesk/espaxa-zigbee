@@ -23,6 +23,15 @@ config ESPAXA_STATUS_INTERVAL_MS
 	  Detects use of the buttons on the AXA itself. Every poll wakes the
 	  AXA, so keep this long on batteries.
 
+config ESPAXA_BUS_POWER_SETTLE_MS
+	int "Delay after switching on the AXA bus pull-up"
+	range 0 1000
+	default 50
+	help
+	  D8 switches battery voltage onto RJ12 pin 1, which feeds the
+	  AXA's bus pull-up, for each serial exchange. This waits for pin 1
+	  and DATA to rise before the wake-up newline.
+
 config ESPAXA_MOVING_STATUS_INTERVAL_MS
 	int "AXA STATUS poll interval while moving"
 	range 500 60000

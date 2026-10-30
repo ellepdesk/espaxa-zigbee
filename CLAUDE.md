@@ -44,7 +44,7 @@ west build -b xiao_ble --sysbuild -d ~/git/espaxa-zigbee/build-battery ~/git/esp
 | `tests/` | Host tests from Python: `Makefile` builds `motion.c`, `battery_level.c` and `shim.c` (fake AXA and clock) into a shared library, `harness.py` wraps it with ctypes, `test_*.py` are pytest |
 | `HARDWARE.md` | Wiring diagram, AXA connector pinout, XIAO pins, level shifter, battery divider |
 | `TESTING.md` | Hardware test plan for when the AXA is connected |
-| `boards/xiao_ble.overlay` | AXA UART on `uart0`: D6 TX P1.11 (open drain) and D5 RX P0.05 tied into one bus line, 19200; I2C on D4/D5 disabled, Zigbee timer, flash partitions, reset pin |
+| `boards/xiao_ble.overlay` | AXA UART on `uart0`: D10 TX P1.15 (open drain) and D9 RX P1.14 tied into one bus line, 19200; D8 (P1.13) switches the AXA bus pull-up power; SPI on D8-D10 disabled, Zigbee timer, flash partitions, reset pin |
 | `Kconfig` | `CONFIG_ESPAXA_*` timing options and the log module |
 | `prj.conf` / `overlay-battery.conf` | Debug default / low-power overlay |
 | `sysbuild.conf` | Turns the partition manager off; partitions come from the overlay |
@@ -97,11 +97,20 @@ Window Covering mapping:
 - The line runs at 19200 baud, 8N2. The stop bits are set at runtime with
   `uart_configure`; the overlay only sets the baud rate.
 - Each transaction:
-  1. Resume the UART.
-  2. Send `\r\n` to wake the AXA, wait 50 ms, then purge what it replied.
-  3. Send the command and read lines until one starts with 3 digits, within 1 s.
-     Up to 2 retries.
-  4. Suspend the UART, then pause 200 ms.
+  1. Switch on the bus pull-up power (D8), wait 50 ms, resume the UART.
+  2. Send `\r` to wake the AXA. Wait at least 50 ms, then drop everything
+     until the bus has been quiet for 30 ms (at most 500 ms): an awake AXA
+     answers the empty line with `502 Command not implemented`.
+  3. Send the command ending in `\r` only, and read lines until one starts
+     with 3 digits, within 1 s. Up to 2 retries.
+  4. Suspend the UART, switch off D8, then pause 200 ms.
+- **`\r` only, never `\r\n`** (found with bus traces, 2026-10-30): the AXA
+  answers as soon as it sees `\r`, so a trailing `\n` collides with the start
+  of its reply on the half-duplex bus. The UART then loses sync and the reply
+  is garbage with framing errors.
+- **Bus trace:** the debug build logs every byte sent and received after each
+  exchange, with times and UART errors (`trace_dump()` in `axa.c`). It is
+  compiled out of the battery build.
 - Codes: 200 OK, 210 unlocked, 211 locked, 212 is assumed to mean "closed but
   not fully locked", 260/261 device/firmware info, 502 error.
 ### Motion state machine (in `motion.c`)
@@ -215,8 +224,13 @@ points that matter for the firmware:
 - **Power:** the AXA's 4× AA pack (4.0–6.6 V, NiMH or alkaline), tapped at
   the battery bay's + terminal, through an external low-quiescent 3.3 V LDO
   into the 3V3 pin. Not the 5V pin: the XIAO's own regulator (SGM2040, 6 V
-  absolute maximum) cannot take fresh alkaline cells. The RJ12 carries only
-  DATA and GND; its Vcc pins are not connected.
+  absolute maximum) cannot take fresh alkaline cells. The RJ12 carries
+  DATA and GND, and pin 1 gets the battery voltage only during an exchange.
+- **Bus pull-up power** (2026-10-30): the AXA's bus pull-up hangs off RJ12
+  pin 1, which is dead on batteries; DATA then floats at 1.4 V and the AXA is
+  silent. D8 (P1.13) switches battery voltage onto pin 1 through a PNP + NPN
+  pair and 1 kΩ, only during an exchange: pin 1 draws 25 to 50 µA when
+  powered. 3.3 V on pin 1 is not enough, it only worked on version A.
 - **LDO, not a buck converter** (decided 2026-10-21): an estimated 5 to 10%
   standby gain does not justify an inductor and the few parts that take
   6.6 V. Revisit only if the measured sleep current is well above the budget.
@@ -225,7 +239,7 @@ points that matter for the firmware:
   (bus pull-up 3.9 kΩ or 33 kΩ) without measuring, so the repo can be shared.
   `HARDWARE.md` has the numbers; they are why TX uses high drive
   (`NRF_DRIVE_H0D1`) and why the series resistor is 33 Ω.
-- **Data line:** a single-wire bus. TX (D6) and RX (D5) are tied together, and
+- **Data line:** a single-wire bus. TX (D10) and RX (D9) are tied together, and
   that line goes through a single-FET bidirectional level shifter to the AXA
   data line through 33 Ω. The AXA has its own pull-up on the bus; on the
   3.3 V side the internal pull-up of RX is the only one. TX is open drain

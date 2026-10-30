@@ -19,12 +19,13 @@ See [HARDWARE.md](HARDWARE.md) for the wiring diagram and the details.
 | XIAO | Connects to |
 |---|---|
 | 3V3 | 3.3 V LDO (input rated 7 V or more) from the + terminal of the AXA's battery bay |
-| 5V | Not connected, USB only. RJ12 pins 1 and 6 are not used either |
+| 5V | Not connected, USB only. RJ12 pin 6 is not used either |
 | GND | AXA GND (RJ12 pins 2 and 5) |
-| D5 (P0.05, RX) | Tied to D6 |
-| D6 (P1.11, TX) | Tied to D5. The common line goes through a BSS138 (gate on 3V3) and 33 Ω to AXA DATA (RJ12 pins 3 and 4) |
+| D10 (P1.15, TX) | Tied to D9. The common line goes through a BSS138 (gate on 3V3) and 33 Ω to AXA DATA (RJ12 pins 3 and 4) |
+| D9 (P1.14, RX) | Tied to D10 |
 | D0 (P0.02) | Battery sense: 4.7 MΩ to battery +, 2.2 MΩ and 100 nF to GND |
 | D1 (P0.03) | Factory reset: connect to GND while resetting |
+| D8 (P1.13) | Bus power switch (PNP + NPN): puts the battery voltage on RJ12 pin 1, which feeds the AXA's bus pull-up, during each exchange |
 
 The design works on both known AXA board versions and with any 4 AA cells,
 NiMH or alkaline.

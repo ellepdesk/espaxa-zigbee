@@ -48,10 +48,10 @@ Record for each test: pass or fail, and the relevant console lines.
 
 If every command times out:
 
-- Check that D5 and D6 are tied together, and that the common line goes to
+- Check that D9 and D10 are tied together, and that the common line goes to
   the 3.3 V side of the level shifter.
 - `No echo of STATUS on the bus` means the XIAO does not even hear itself:
-  the bus line is broken, shorted to ground, or D5 and D6 are not tied.
+  the bus line is broken, shorted to ground, or D9 and D10 are not tied.
 - Timeouts without that warning mean the bus works but the AXA does not
   answer. Check the AXA side of the shifter.
 - Check that the level shifter's gate is on 3V3. Its 3.3 V side relies on
