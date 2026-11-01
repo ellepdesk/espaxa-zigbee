@@ -3,6 +3,7 @@
  *
  * Sleepy end device with a Window Covering cluster. The AXA side lives in
  * axa.c, this file maps Zigbee commands onto it and reports the position.
+ * A Binary Input cluster reports whether the AXA confirms Strong Locked.
  *
  * Zigbee lift percentage is inverted: 0 = fully open, 100 = fully closed.
  */
@@ -33,20 +34,22 @@ LOG_MODULE_REGISTER(app, CONFIG_ESPAXA_LOG_LEVEL);
 #define ESPAXA_ENDPOINT 1
 
 /*
- * The HA Window Covering device (5 server clusters), plus Power Configuration
- * for the battery. Plain numbers: ZBOSS pastes them into type names.
+ * The HA Window Covering device (5 server clusters), plus Binary Input for
+ * the lock and Power Configuration for the battery. Plain numbers: ZBOSS
+ * pastes them into type names.
  */
 #if defined(CONFIG_ESPAXA_BATTERY)
 #define ESPAXA_BATTERY_CLUSTERS 1
-#define ESPAXA_IN_CLUSTER_NUM 6
+#define ESPAXA_IN_CLUSTER_NUM 7
 #else
 #define ESPAXA_BATTERY_CLUSTERS 0
-#define ESPAXA_IN_CLUSTER_NUM 5
+#define ESPAXA_IN_CLUSTER_NUM 6
 #endif
 #define ESPAXA_OUT_CLUSTER_NUM 0
 /* Battery voltage and percentage remaining are reportable */
 #define ESPAXA_REPORT_ATTR_COUNT \
-	(ZB_HA_WINDOW_COVERING_REPORT_ATTR_COUNT + 2 * ESPAXA_BATTERY_CLUSTERS)
+	(ZB_HA_WINDOW_COVERING_REPORT_ATTR_COUNT + ZB_ZCL_BINARY_INPUT_REPORT_ATTR_COUNT + \
+	 2 * ESPAXA_BATTERY_CLUSTERS)
 
 /* ZCL: BatteryVoltage in 100 mV, 0xFF and BatteryPercentageRemaining 0xFF = unknown */
 #define BATTERY_UNKNOWN 0xFF
@@ -79,6 +82,11 @@ struct espaxa_ctx {
 		zb_uint16_t closed_limit_tilt;
 		zb_uint8_t mode;
 	} wc;
+	struct {
+		zb_bool_t out_of_service;
+		zb_bool_t present_value;
+		zb_uint8_t status_flag;
+	} lock;
 	struct {
 		zb_uint8_t voltage;
 		zb_uint8_t size;
@@ -132,6 +140,16 @@ ZB_ZCL_DECLARE_WINDOW_COVERING_CLUSTER_ATTRIB_LIST(
 	&ctx.wc.closed_limit_tilt,
 	&ctx.wc.mode);
 
+/*
+ * Present value 1 = not Strong Locked, 0 = Strong Locked (211): the polarity of
+ * Home Assistant's lock device class, where on means unlocked
+ */
+ZB_ZCL_DECLARE_BINARY_INPUT_ATTRIB_LIST(
+	lock_attr_list,
+	&ctx.lock.out_of_service,
+	&ctx.lock.present_value,
+	&ctx.lock.status_flag);
+
 #if defined(CONFIG_ESPAXA_BATTERY)
 /*
  * Declared by hand: ZBOSS's battery list macros either lack the percentage or
@@ -168,6 +186,8 @@ static zb_zcl_cluster_desc_t espaxa_clusters[] = {
 			    (scenes_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
 	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_GROUPS, ZB_ZCL_ARRAY_SIZE(groups_attr_list, zb_zcl_attr_t),
 			    (groups_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
+	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_BINARY_INPUT, ZB_ZCL_ARRAY_SIZE(lock_attr_list, zb_zcl_attr_t),
+			    (lock_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
 #if defined(CONFIG_ESPAXA_BATTERY)
 	ZB_ZCL_CLUSTER_DESC(ZB_ZCL_CLUSTER_ID_POWER_CONFIG, ZB_ZCL_ARRAY_SIZE(power_config_attr_list, zb_zcl_attr_t),
 			    (power_config_attr_list), ZB_ZCL_CLUSTER_SERVER_ROLE, ZB_ZCL_MANUF_CODE_INVALID),
@@ -192,6 +212,7 @@ static ZB_AF_SIMPLE_DESC_TYPE(ESPAXA_IN_CLUSTER_NUM, ESPAXA_OUT_CLUSTER_NUM) sim
 		ZB_ZCL_CLUSTER_ID_WINDOW_COVERING,
 		ZB_ZCL_CLUSTER_ID_SCENES,
 		ZB_ZCL_CLUSTER_ID_GROUPS,
+		ZB_ZCL_CLUSTER_ID_BINARY_INPUT,
 #if defined(CONFIG_ESPAXA_BATTERY)
 		ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
 #endif
@@ -232,6 +253,11 @@ static void clusters_attr_init(void)
 	ctx.wc.closed_limit_tilt = ZB_ZCL_WINDOW_COVERING_INSTALLED_CLOSED_LIMIT_TILT_DEFAULT_VALUE;
 	ctx.wc.mode = 0;
 
+	/* Not locked until a STATUS confirms it */
+	ctx.lock.out_of_service = ZB_ZCL_BINARY_INPUT_OUT_OF_SERVICE_DEFAULT_VALUE;
+	ctx.lock.present_value = ZB_TRUE;
+	ctx.lock.status_flag = ZB_ZCL_BINARY_INPUT_STATUS_FLAG_DEFAULT_VALUE;
+
 #if defined(CONFIG_ESPAXA_BATTERY)
 	ctx.power.voltage = BATTERY_UNKNOWN;
 	ctx.power.size = ZB_ZCL_POWER_CONFIG_BATTERY_SIZE_AA;
@@ -262,6 +288,36 @@ static int on_axa_position(uint8_t open_percent)
 		return -EAGAIN;
 	}
 	return 0;
+}
+
+/* Runs in the Zigbee thread, scheduled from the AXA thread. */
+static void set_strong_locked(zb_uint8_t locked)
+{
+	zb_bool_t value = locked ? ZB_FALSE : ZB_TRUE;
+	zb_zcl_status_t status = zb_zcl_set_attr_val(
+		ESPAXA_ENDPOINT, ZB_ZCL_CLUSTER_ID_BINARY_INPUT, ZB_ZCL_CLUSTER_SERVER_ROLE,
+		ZB_ZCL_ATTR_BINARY_INPUT_PRESENT_VALUE_ID, (zb_uint8_t *)&value, ZB_FALSE);
+
+	if (status != ZB_ZCL_STATUS_SUCCESS) {
+		LOG_WRN("Cannot set lock state (status %d)", status);
+	}
+}
+
+/* Last lock state handed to Zigbee, -1 before the first STATUS */
+static int reported_locked = -1;
+
+static void on_axa_lock(bool strong_locked)
+{
+	if (strong_locked == reported_locked) {
+		return;
+	}
+	LOG_INF("%s", strong_locked ? "Strong Locked" : "Not Strong Locked");
+	/* On failure the next STATUS tries again */
+	if (zigbee_schedule_callback(set_strong_locked, strong_locked) == RET_OK) {
+		reported_locked = strong_locked;
+	} else {
+		LOG_WRN("Cannot schedule lock report");
+	}
 }
 
 #if defined(CONFIG_ESPAXA_BATTERY)
@@ -495,7 +551,7 @@ int main(void)
 
 	zigbee_enable();
 
-	if (axa_init(on_axa_position) != 0) {
+	if (axa_init(on_axa_position, on_axa_lock) != 0) {
 		LOG_ERR("AXA init failed");
 	}
 

@@ -71,6 +71,7 @@ static const struct device *const uart = DEVICE_DT_GET(DT_ALIAS(axa_uart));
 static const struct gpio_dt_spec bus_power =
 	GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), bus_power_gpios);
 static axa_position_cb_t position_cb;
+static axa_lock_cb_t lock_cb;
 static struct motion motion;
 static bool in_transaction;
 
@@ -417,8 +418,13 @@ static int transact(enum axa_cmd cmd, char *line, size_t size)
 static int send_cmd(enum axa_cmd cmd)
 {
 	char line[LINE_MAX];
+	int code = transact(cmd, line, sizeof(line));
 
-	return transact(cmd, line, sizeof(line));
+	if (cmd == CMD_STATUS &&
+	    (code == CODE_UNLOCKED || code == CODE_LOCKED || code == CODE_LOCKED_UNSAFE)) {
+		lock_cb(code == CODE_LOCKED);
+	}
+	return code;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -528,7 +534,7 @@ void axa_stop(void)
 	queue_request(&req);
 }
 
-int axa_init(axa_position_cb_t cb)
+int axa_init(axa_position_cb_t pos_cb, axa_lock_cb_t lck_cb)
 {
 	const struct uart_config cfg = {
 		.baudrate = 19200,
@@ -563,7 +569,8 @@ int axa_init(axa_position_cb_t cb)
 	}
 	uart_power(false);
 
-	position_cb = cb;
+	position_cb = pos_cb;
+	lock_cb = lck_cb;
 	activity_init();
 
 	k_thread_create(&axa_thread_data, axa_stack, K_THREAD_STACK_SIZEOF(axa_stack), axa_thread,

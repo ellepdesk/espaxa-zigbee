@@ -9,6 +9,8 @@ for Home Assistant ZHA. Successor of [espaxa](https://github.com/ellepdesk/espax
 - Commands arrive within the Zigbee poll interval (default 5 s), the parent
   router buffers them while the device sleeps
 - Position estimated from travel time, locking confirmed by the AXA
+- A separate lock binary sensor, locked only when the AXA itself reports 211
+  Strong Locked. Set "Show as" to Lock in Home Assistant
 - Detects use of the buttons on the AXA itself
 - Reports the battery voltage and level of the AXA's battery pack
 
@@ -85,6 +87,13 @@ The console of the default build is on the USB serial port, e.g.
 
 Enable "Add device" in ZHA and power the XIAO. It joins by itself on first boot.
 To pair again, reset it with D1 connected to GND.
+
+After a firmware update that adds a cluster, press "Reconfigure" on the
+device in ZHA to pick it up.
+
+ZHA adds an "Inverted" switch to every window covering. It sets the reversed
+motor bit in the Window Covering Mode attribute, which the AXA has no use for
+and this firmware ignores. Disable that entity in Home Assistant.
 
 ## Tuning
 

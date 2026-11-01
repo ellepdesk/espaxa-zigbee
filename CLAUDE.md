@@ -91,6 +91,19 @@ Window Covering mapping:
 - Command mapping: `UP_OPEN` → 100, `DOWN_CLOSE` → 0,
   `GO_TO_LIFT_PERCENTAGE` → `100 - value`, `STOP` → stop.
 - The app sets the attribute itself; ZBOSS does not move it on commands.
+- ZHA's "Inverted" switch writes the reversed motor bit in the Mode
+  attribute. The firmware ignores it; it is meaningless for the AXA.
+
+Lock state: a Binary Input cluster (0x000F) on the same endpoint, which ZHA
+shows as a binary sensor. `PresentValue` is 0 only after a STATUS reply of
+211 Strong Locked, 1 after 210 or 212, and 1 at boot until the first STATUS.
+Inverted on purpose: Home Assistant's lock device class reads on as unlocked,
+so with "Show as: Lock" it displays correctly. "Reconfigure" in ZHA picks up
+a newly added cluster, no need to pair again.
+It comes from the raw STATUS replies (`send_cmd()` in `axa.c` calls the lock
+callback), not from the lock state in `motion.c`, which counts 212 as locked
+and infers states from timers. Only changes are scheduled into the Zigbee
+thread.
 
 ### AXA protocol (in `axa.c`)
 

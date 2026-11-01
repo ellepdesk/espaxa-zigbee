@@ -177,6 +177,18 @@ been quiet for a minute.
 For quicker checks, build with `CONFIG_ESPAXA_BATTERY_INTERVAL_MS=60000` in
 `overlay-test.conf`.
 
+## 11. Strong Locked sensor
+
+Press "Reconfigure" on the device in ZHA first, so it sees the Binary Input
+cluster, and set the new sensor's "Show as" to Lock. On = unlocked.
+
+| # | Step | Expected |
+|---|---|---|
+| 11.1 | After the reconfigure, with the window locked | A lock sensor on the device, Locked after the first STATUS. Log: `Strong Locked` |
+| 11.2 | Open from HA | Shows Unlocked within one moving STATUS poll (2 s) of the AXA unlocking. Log: `Not Strong Locked` |
+| 11.3 | Close from HA | Shows Locked with the STATUS that returns 211, at about the same time as `Locked` |
+| 11.4 | If 212 ever shows up (see 4.6) | The sensor stays Unlocked |
+
 ## Results
 
 | Date | Firmware build time | AXA pull-up (392 or 333) | Cells | Sections run | Notes |

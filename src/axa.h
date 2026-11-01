@@ -9,6 +9,7 @@
 #ifndef AXA_H_
 #define AXA_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /*
@@ -18,7 +19,13 @@
  */
 typedef int (*axa_position_cb_t)(uint8_t open_percent);
 
-int axa_init(axa_position_cb_t position_cb);
+/*
+ * Called from the AXA thread after each STATUS reply: true only for 211
+ * Strong Locked, false for unlocked and for 212 (closed, not fully locked).
+ */
+typedef void (*axa_lock_cb_t)(bool strong_locked);
+
+int axa_init(axa_position_cb_t position_cb, axa_lock_cb_t lock_cb);
 
 /* Move to a position, 0 = closed (and locked), 100 = fully open. */
 void axa_move_to(uint8_t open_percent);
