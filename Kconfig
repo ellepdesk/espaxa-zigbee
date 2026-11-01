@@ -13,7 +13,10 @@ config ESPAXA_OPEN_DURATION_MS
 config ESPAXA_LOCK_DURATION_MS
 	int "Time after reaching closed before the window is locked"
 	range 0 120000
-	default 30000
+	default 45000
+	help
+	  Upper bound only: a STATUS of 211 ends the wait early. Measured 22 to
+	  32 s after the estimate reached closed (2026-10-30 and 2026-11-01).
 
 config ESPAXA_STATUS_INTERVAL_MS
 	int "AXA STATUS poll interval while idle"

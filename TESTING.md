@@ -70,7 +70,7 @@ Measure each one three times with the stopwatch, starting at the
 |---|---|---|---|
 | 2.1 | Open from locked: from the ack until the chain starts moving | `ESPAXA_UNLOCK_DURATION_MS` | 10 s |
 | 2.2 | Chain travel from closed to fully open | `ESPAXA_OPEN_DURATION_MS` | 50 s |
-| 2.3 | Close: from the chain fully in until STATUS reports 211 | `ESPAXA_LOCK_DURATION_MS` | 30 s |
+| 2.3 | Close: from the chain fully in until STATUS reports 211 | `ESPAXA_LOCK_DURATION_MS` | 45 s |
 | 2.4 | Chain travel from fully open to closed | Compare with 2.2 | — |
 
 If 2.2 and 2.4 differ by more than about 10%, closing needs its own duration.

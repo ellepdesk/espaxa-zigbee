@@ -103,7 +103,7 @@ Timings are Kconfig options, set them in `prj.conf`:
 |---|---|---|
 | `CONFIG_ESPAXA_UNLOCK_DURATION_MS` | 10000 | OPEN until the chain moves |
 | `CONFIG_ESPAXA_OPEN_DURATION_MS` | 50000 | chain travel, closed to fully open |
-| `CONFIG_ESPAXA_LOCK_DURATION_MS` | 30000 | fully closed until locked |
+| `CONFIG_ESPAXA_LOCK_DURATION_MS` | 45000 | fully closed until locked |
 | `CONFIG_ESPAXA_STATUS_INTERVAL_MS` | 600000 | AXA STATUS poll while idle |
 | `CONFIG_ESPAXA_MOVING_STATUS_INTERVAL_MS` | 2000 | AXA STATUS poll while moving |
 | `CONFIG_ESPAXA_ZIGBEE_POLL_INTERVAL_MS` | 5000 | command delay, keep below 7.7 s |
