@@ -12,7 +12,8 @@
  *   UNLOCKING  OPEN accepted while locked, the chain starts after unlock_ms
  *   OPENING    chain moving out
  *   CLOSING    chain moving in
- *   LOCKING    estimate reached closed, the AXA locks within lock_ms
+ *   LOCKING    estimate reached closed, the AXA locks within lock_ms. If
+ *              it does not, STOP and close once more from fully open
  *
  * All functions must be called from one thread.
  */
@@ -76,6 +77,8 @@ struct motion_config {
 	uint32_t report_interval_ms;
 	/* Gap between the two reports of a failed command */
 	uint32_t bounce_gap_ms;
+	/* Send a short OPEN before each CLOSE */
+	bool release_before_close;
 };
 
 struct motion_ops {
@@ -108,6 +111,8 @@ struct motion {
 	int64_t next_status;
 	int64_t last_report;
 	int reported;
+	/* The current close already ran a second time after a failed lock */
+	bool close_retried;
 };
 
 /* Command as sent on the serial line, e.g. "STATUS". */

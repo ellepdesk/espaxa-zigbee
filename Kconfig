@@ -18,6 +18,14 @@ config ESPAXA_LOCK_DURATION_MS
 	  Upper bound only: a STATUS of 211 ends the wait early. Measured 22 to
 	  32 s after the estimate reached closed (2026-10-30 and 2026-11-01).
 
+config ESPAXA_RELEASE_BEFORE_CLOSE
+	bool "Send a short OPEN before each CLOSE"
+	default y
+	help
+	  From galagaking/espaxa: the AXA blocks at its end position and an
+	  OPEN releases it. On this unit the pair has twice made the AXA open
+	  instead of close, from fully open and from closed.
+
 config ESPAXA_STATUS_INTERVAL_MS
 	int "AXA STATUS poll interval while idle"
 	range 10000 86400000

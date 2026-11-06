@@ -160,13 +160,56 @@ def test_open_while_locking_reverses_without_stop(axa_locking):
 
 def test_lock_timer_without_confirmation_is_not_a_manual_open(axa_locking):
     axa = axa_locking
-    # The AXA never reports locked
-    axa.run(32_000)
+    # The AXA never reports locked, not even after the second close
+    axa.run(32_000 + 52_000 + 32_000)
     assert axa.phase == Phase.IDLE
     axa.run(2 * 600_000)
     # An unlocked STATUS right after closing is not a manual open
     assert axa.position == 0.0
-    assert 100 not in axa.reports
+    assert axa.phase == Phase.IDLE
+
+
+def test_failed_lock_stops_and_closes_again(axa_locking):
+    axa = axa_locking
+    axa.run(31_000)
+    assert axa.commands[-4:] == ["STATUS", "STOP", "OPEN", "CLOSE"]
+    assert axa.phase == Phase.CLOSING
+    # Restarted from an unknown position, assumed fully open
+    assert 100 in axa.reports
+    axa.status = Code.LOCKED
+    axa.run(3_000)
+    assert axa.phase == Phase.IDLE
+    assert axa.lock == Lock.LOCKED
+    assert axa.last_report == 0
+
+
+def test_failed_lock_is_retried_only_once(axa_locking):
+    axa = axa_locking
+    axa.run(32_000 + 52_000 + 32_000)
+    assert axa.commands.count("CLOSE") == 1
+    assert axa.commands.count("STOP") == 2
+    assert axa.commands[-1] != "CLOSE"
+    assert axa.phase == Phase.IDLE
+    assert axa.lock == Lock.UNKNOWN or axa.lock == Lock.UNLOCKED
+    axa.clear_log()
+    axa.run(10 * 60_000)
+    assert "CLOSE" not in axa.commands
+
+
+def test_lock_seen_by_the_last_status_needs_no_retry():
+    # Polls too slow to see the lock during the wait
+    axa = Axa()
+    axa.start(status=Code.UNLOCKED, status_moving_ms=200_000)
+    axa.move_to(100)
+    axa.run(70_000)
+    axa.move_to(0)
+    axa.run(52_000 + 20_000)
+    axa.clear_log()
+    axa.status = Code.LOCKED
+    axa.run(15_000)
+    assert axa.commands == ["STATUS"]
+    assert axa.phase == Phase.IDLE
+    assert axa.lock == Lock.LOCKED
 
 
 # -- buttons on the AXA ---------------------------------------------------
@@ -191,6 +234,29 @@ def test_manual_close_detected(axa):
 
 
 # -- failures -------------------------------------------------------------
+
+
+def test_close_without_release_sends_only_close():
+    axa = Axa()
+    axa.start(status=Code.UNLOCKED, release_before_close=False)
+    axa.move_to(100)
+    axa.run(70_000)
+    axa.clear_log()
+    axa.move_to(0)
+    assert axa.commands == ["CLOSE"]
+    assert axa.phase == Phase.CLOSING
+
+
+def test_close_failure_without_release_sends_no_stop():
+    axa = Axa()
+    axa.start(status=Code.UNLOCKED, release_before_close=False)
+    axa.move_to(60)
+    axa.run(60_000)
+    axa.clear_log()
+    axa.reply(Cmd.CLOSE, Code.TIMEOUT)
+    axa.move_to(0)
+    assert axa.commands == ["CLOSE"]
+    assert axa.phase == Phase.IDLE
 
 
 def test_close_failure_after_accepted_open_sends_stop(axa):

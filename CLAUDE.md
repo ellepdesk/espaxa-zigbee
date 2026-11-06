@@ -135,7 +135,9 @@ machine's log). A new field or function the tests need goes through
 
 - **Phases:** idle, unlocking (OPEN accepted while locked, chain starts after
   `UNLOCK_DURATION`), opening, closing, locking (estimate at 0, the AXA locks
-  within `LOCK_DURATION`). The position (0.0–1.0) is estimated from time in
+  within `LOCK_DURATION`). When the lock wait runs out: one last STATUS, then
+  STOP and one more full close from an assumed 100%. A second failure sends
+  STOP and leaves the lock unknown. The position (0.0–1.0) is estimated from time in
   the phase; motion starts at the ack of the motion command.
 - **Lock state** is locked, unlocked or unknown, and only STATUS sets it to
   locked. A chain that is out (position > 0) is unlocked. Stopping during
@@ -184,9 +186,14 @@ machine's log). A new field or function the tests need goes through
 - **STATUS poll every 10 min while idle.** It only exists to detect button use
   on the AXA, and every poll wakes the AXA. While moving it runs every 2 s, to
   catch locking.
-- **Closing sends OPEN before CLOSE.** From galagaking/espaxa: the AXA
-  blocks at its end position, and a short OPEN releases it. Don't remove it
-  without testing.
+- **Closing sends OPEN before CLOSE** (`CONFIG_ESPAXA_RELEASE_BEFORE_CLOSE`).
+  From galagaking/espaxa: the AXA blocks at its end position, and a short
+  OPEN releases it. Kept on the user's call, although the pair twice made
+  the AXA open instead (2026-10-30 from fully open, 2026-11-05 from closed).
+  Hence the retry with STOP when the lock wait runs out.
+- **After a power loss the AXA reports 210 UnLocked** while closed and
+  locked, until it has moved (seen 2026-11-05). The firmware then reads the
+  window as opened by hand. One close from HA brings it back in sync.
 - **Flash layout.** The XIAO's UF2 bootloader needs the application at 0x27000.
   Zigbee needs `zboss_nvram` (32 kB) and `zboss_product_config` (4 kB) as fixed
   partitions, so the application partition shrinks to 752 kB:

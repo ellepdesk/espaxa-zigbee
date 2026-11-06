@@ -177,6 +177,39 @@ static void advance(struct motion *m, int64_t t)
 	}
 }
 
+static void start_close(struct motion *m);
+static void handle_status(struct motion *m, int code);
+
+/*
+ * The lock wait ran out. Seen when the AXA opened instead of closing: stop
+ * it and close once more, from an unknown position.
+ */
+static void lock_failed(struct motion *m)
+{
+	/* The lock may have come just after the last poll */
+	handle_status(m, send(m, CMD_STATUS));
+	if (m->phase != PHASE_LOCKING) {
+		return;
+	}
+	send(m, CMD_STOP);
+	if (!m->close_retried) {
+		LOG_WRN("Lock not confirmed, closing again");
+		m->close_retried = true;
+		/* Assume fully open, the worst case; a 211 ends the close early */
+		m->position = 1.0f;
+		m->target = 0.0f;
+		m->lock = LOCK_UNLOCKED;
+		enter(m, PHASE_IDLE, now(m));
+		report(m, true);
+		start_close(m);
+		return;
+	}
+	/* Not confirmed twice, the settle poll will tell */
+	LOG_WRN("Lock not confirmed");
+	m->lock = LOCK_UNKNOWN;
+	go_idle(m, 0.0f, true);
+}
+
 /* Act on reaching the target or the end of the lock wait. */
 static void check_arrival(struct motion *m, int64_t t)
 {
@@ -211,10 +244,7 @@ static void check_arrival(struct motion *m, int64_t t)
 
 	case PHASE_LOCKING:
 		if (t - m->phase_start >= m->cfg.lock_ms) {
-			/* Not confirmed by STATUS, the settle poll will tell */
-			LOG_INF("Lock not confirmed");
-			m->lock = LOCK_UNKNOWN;
-			go_idle(m, 0.0f, true);
+			lock_failed(m);
 		}
 		break;
 
@@ -282,17 +312,26 @@ static void start_open(struct motion *m)
 
 static void start_close(struct motion *m)
 {
-	/* The AXA blocks at its end position, a short OPEN releases it (galagaking/espaxa) */
-	int code = send(m, CMD_OPEN);
+	int code;
 
-	if (code != CODE_OK) {
-		fail(m, CMD_OPEN, code, -1);
-		return;
+	if (m->cfg.release_before_close) {
+		/*
+		 * The AXA blocks at its end position, a short OPEN releases it
+		 * (galagaking/espaxa). Seen to make the AXA open instead
+		 * (2026-10-30, 2026-11-05).
+		 */
+		code = send(m, CMD_OPEN);
+		if (code != CODE_OK) {
+			fail(m, CMD_OPEN, code, -1);
+			return;
+		}
 	}
 	code = send(m, CMD_CLOSE);
 	if (code != CODE_OK) {
-		/* The AXA accepted OPEN, don't leave it opening */
-		send(m, CMD_STOP);
+		if (m->cfg.release_before_close) {
+			/* The AXA accepted OPEN, don't leave it opening */
+			send(m, CMD_STOP);
+		}
 		fail(m, CMD_CLOSE, code, -1);
 		return;
 	}
@@ -380,6 +419,7 @@ void motion_move_to(struct motion *m, uint8_t open_percent)
 
 	advance(m, now(m));
 	m->baseline = CODE_NONE;
+	m->close_retried = false;
 
 	switch (m->phase) {
 	case PHASE_LOCKING: {

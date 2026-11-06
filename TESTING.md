@@ -31,7 +31,10 @@ to bring back.
    picocom -b 115200 --logfile axa-$(date +%F-%H%M).log /dev/ttyACM0
    ```
 
-3. Have the cover open in Home Assistant, and a stopwatch at hand.
+3. Have the cover open in Home Assistant, and a stopwatch at hand. The
+   commands can also be given from the console with `axa open`, `axa close`,
+   `axa stop` and `axa goto <0-100>`. `bootloader` replaces the double-tap
+   for flashing.
 4. Start with the window closed and locked, using the AXA's own button.
 
 Record for each test: pass or fail, and the relevant console lines.
@@ -138,6 +141,7 @@ With `overlay-test.conf`, idle STATUS polls come every 30 s.
 | 7.1 | Disconnect the AXA data line and press Open in HA | `OPEN failed (-1)`. HA shows "opening" for about 4 s, then back to the old state |
 | 7.2 | Reconnect it and press Open | Works normally |
 | 7.3 | Disconnect the data line during a close from 50%, before CLOSE is sent. This needs timing, so retry if it misses | `CLOSE failed` followed by STOP. Check that the AXA did not keep opening |
+| 7.4 | Close, and hold the chain so the AXA cannot lock (or note it when it happens by itself) | After the lock wait: `Lock not confirmed, closing again`, STOP, then a second close. If that fails too: `Lock not confirmed`, idle at 0% with the lock unknown |
 
 ## 8. Zigbee
 

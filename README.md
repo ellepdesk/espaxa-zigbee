@@ -83,6 +83,18 @@ Double-tap the reset button, the XIAO shows up as a USB drive. Copy
 The console of the default build is on the USB serial port, e.g.
 `picocom /dev/ttyACM0`. Logging starts 4 s after boot.
 
+The console is also a shell, with the prompt `axa> `:
+
+| Command | |
+|---|---|
+| `axa open` | open fully |
+| `axa close` | close and lock |
+| `axa stop` | stop |
+| `axa goto <0-100>` | go to a position, 0 is closed |
+| `bootloader` | reboot into the UF2 bootloader, instead of the double-tap |
+
+The battery build has no shell.
+
 ## Pairing
 
 Enable "Add device" in ZHA and power the XIAO. It joins by itself on first boot.
@@ -104,6 +116,7 @@ Timings are Kconfig options, set them in `prj.conf`:
 | `CONFIG_ESPAXA_UNLOCK_DURATION_MS` | 10000 | OPEN until the chain moves |
 | `CONFIG_ESPAXA_OPEN_DURATION_MS` | 50000 | chain travel, closed to fully open |
 | `CONFIG_ESPAXA_LOCK_DURATION_MS` | 45000 | fully closed until locked |
+| `CONFIG_ESPAXA_RELEASE_BEFORE_CLOSE` | y | send OPEN before CLOSE, to release the AXA from its end position |
 | `CONFIG_ESPAXA_STATUS_INTERVAL_MS` | 600000 | AXA STATUS poll while idle |
 | `CONFIG_ESPAXA_MOVING_STATUS_INTERVAL_MS` | 2000 | AXA STATUS poll while moving |
 | `CONFIG_ESPAXA_ZIGBEE_POLL_INTERVAL_MS` | 5000 | command delay, keep below 7.7 s |

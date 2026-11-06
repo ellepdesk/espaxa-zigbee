@@ -150,7 +150,7 @@ int fake_report_value(int i)
 
 void sim_init(uint32_t unlock_ms, uint32_t open_ms, uint32_t lock_ms, uint32_t status_idle_ms,
 	      uint32_t status_moving_ms, uint32_t tick_ms, uint32_t report_interval_ms,
-	      uint32_t bounce_gap_ms)
+	      uint32_t bounce_gap_ms, bool release_before_close)
 {
 	const struct motion_config cfg = {
 		.unlock_ms = unlock_ms,
@@ -161,6 +161,7 @@ void sim_init(uint32_t unlock_ms, uint32_t open_ms, uint32_t lock_ms, uint32_t s
 		.tick_ms = tick_ms,
 		.report_interval_ms = report_interval_ms,
 		.bounce_gap_ms = bounce_gap_ms,
+		.release_before_close = release_before_close,
 	};
 
 	motion_init(&m, &cfg, &ops);

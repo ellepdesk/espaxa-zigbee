@@ -34,6 +34,7 @@ CONFIG = {
     "tick_ms": 500,
     "report_interval_ms": 2_000,
     "bounce_gap_ms": 500,
+    "release_before_close": True,
 }
 
 # Fake time per serial transaction, as in shim.c.
@@ -112,7 +113,7 @@ class _Lib:
             "fake_command": ([i32], i32),
             "fake_report_count": ([], i32),
             "fake_report_value": ([i32], i32),
-            "sim_init": ([u32] * 8, None),
+            "sim_init": ([u32] * 8 + [ctypes.c_bool], None),
             "sim_move_to": ([u8], None),
             "sim_stop": ([], None),
             "sim_tick": ([], None),

@@ -464,6 +464,7 @@ static const struct motion_config motion_cfg = {
 	.tick_ms = MOTION_TICK_MS,
 	.report_interval_ms = REPORT_INTERVAL_MS,
 	.bounce_gap_ms = FAILURE_BOUNCE_GAP_MS,
+	.release_before_close = IS_ENABLED(CONFIG_ESPAXA_RELEASE_BEFORE_CLOSE),
 };
 
 static const struct motion_ops motion_ops = {

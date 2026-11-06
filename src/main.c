@@ -290,6 +290,8 @@ static int on_axa_position(uint8_t open_percent)
 	return 0;
 }
 
+static void report_attr(zb_uint16_t cluster, zb_uint16_t attr);
+
 /* Runs in the Zigbee thread, scheduled from the AXA thread. */
 static void set_strong_locked(zb_uint8_t locked)
 {
@@ -301,6 +303,7 @@ static void set_strong_locked(zb_uint8_t locked)
 	if (status != ZB_ZCL_STATUS_SUCCESS) {
 		LOG_WRN("Cannot set lock state (status %d)", status);
 	}
+	report_attr(ZB_ZCL_CLUSTER_ID_BINARY_INPUT, ZB_ZCL_ATTR_BINARY_INPUT_PRESENT_VALUE_ID);
 }
 
 /* Last lock state handed to Zigbee, -1 before the first STATUS */
@@ -409,6 +412,33 @@ static void zcl_device_cb(zb_bufid_t bufid)
 	}
 }
 
+/*
+ * Reports go out only on a change, so one lost while the device was not on
+ * the network (e.g. the first STATUS after boot, before the rejoin) would
+ * stick until the next move. Report the state again after each (re)join.
+ */
+static void report_attr(zb_uint16_t cluster, zb_uint16_t attr)
+{
+	zb_zcl_reporting_info_t *info = zb_zcl_find_reporting_info(
+		ESPAXA_ENDPOINT, cluster, ZB_ZCL_CLUSTER_SERVER_ROLE, attr);
+
+	if (info == NULL) {
+		LOG_WRN("No reporting configured for 0x%04x/0x%04x", cluster, attr);
+		return;
+	}
+	LOG_DBG("Reporting 0x%04x/0x%04x: min %u s, max %u s, flags 0x%02x, to 0x%04x ep %u",
+		cluster, attr, info->u.send_info.min_interval, info->u.send_info.max_interval,
+		info->flags, info->dst.short_addr, info->dst.endpoint);
+	zb_zcl_mark_attr_for_reporting(ESPAXA_ENDPOINT, cluster, ZB_ZCL_CLUSTER_SERVER_ROLE, attr);
+}
+
+static void report_state(void)
+{
+	report_attr(ZB_ZCL_CLUSTER_ID_WINDOW_COVERING,
+		    ZB_ZCL_ATTR_WINDOW_COVERING_CURRENT_POSITION_LIFT_PERCENTAGE_ID);
+	report_attr(ZB_ZCL_CLUSTER_ID_BINARY_INPUT, ZB_ZCL_ATTR_BINARY_INPUT_PRESENT_VALUE_ID);
+}
+
 void zboss_signal_handler(zb_bufid_t bufid)
 {
 	zb_zdo_app_signal_hdr_t *sig_hdr = NULL;
@@ -422,6 +452,7 @@ void zboss_signal_handler(zb_bufid_t bufid)
 		if (status == RET_OK) {
 			/* Worst case delay for commands from Home Assistant */
 			zb_zdo_pim_set_long_poll_interval(CONFIG_ESPAXA_ZIGBEE_POLL_INTERVAL_MS);
+			report_state();
 		}
 		break;
 
@@ -506,6 +537,64 @@ static void console_watch_start(void)
 static void console_watch_start(void)
 {
 }
+#endif
+
+#if defined(CONFIG_SHELL)
+#include <stdlib.h>
+#include <zephyr/shell/shell.h>
+#include <zephyr/sys/reboot.h>
+#include <hal/nrf_power.h>
+
+/* Debug shell on the USB console, to drive the AXA without Home Assistant */
+
+static int cmd_open(const struct shell *sh, size_t argc, char **argv)
+{
+	axa_move_to(100);
+	return 0;
+}
+
+static int cmd_close(const struct shell *sh, size_t argc, char **argv)
+{
+	axa_move_to(0);
+	return 0;
+}
+
+static int cmd_stop(const struct shell *sh, size_t argc, char **argv)
+{
+	axa_stop();
+	return 0;
+}
+
+static int cmd_goto(const struct shell *sh, size_t argc, char **argv)
+{
+	int percent = atoi(argv[1]);
+
+	if (percent < 0 || percent > 100) {
+		shell_error(sh, "0 (closed) to 100 (open)");
+		return -EINVAL;
+	}
+	axa_move_to((uint8_t)percent);
+	return 0;
+}
+
+/* The XIAO's Adafruit bootloader stays in UF2 mode after a reset with this */
+#define UF2_BOOTLOADER_MAGIC 0x57
+
+static int cmd_bootloader(const struct shell *sh, size_t argc, char **argv)
+{
+	nrf_power_gpregret_set(NRF_POWER, 0, UF2_BOOTLOADER_MAGIC);
+	sys_reboot(SYS_REBOOT_COLD);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(axa_cmds,
+	SHELL_CMD(open, NULL, "Open fully", cmd_open),
+	SHELL_CMD(close, NULL, "Close and lock", cmd_close),
+	SHELL_CMD(stop, NULL, "Stop", cmd_stop),
+	SHELL_CMD_ARG(goto, NULL, "Go to <percent open>", cmd_goto, 2, 0),
+	SHELL_SUBCMD_SET_END);
+SHELL_CMD_REGISTER(axa, &axa_cmds, "Drive the AXA", NULL);
+SHELL_CMD_REGISTER(bootloader, NULL, "Reboot into the UF2 bootloader", cmd_bootloader);
 #endif
 
 /* Factory reset when the reset pin is held low at boot. */
